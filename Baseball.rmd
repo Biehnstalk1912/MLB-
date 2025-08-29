@@ -8,12 +8,18 @@ output: pdf_document
 library(tidyverse)
 library(mosaic)
 library(ggfortify)
+library(zoo)
+library(forecast)
+library(caret)
 ```
 
 ```{r}
 baseball <- read_csv("Baseball.csv")
-baseball %>% head(10)
-```
+baseball <- baseball %>%
+  mutate(teamID = factor(teamID))
+baseball <- baseball %>%
+              filter(yearID > 1920)
+``` 
 ```{r}
 baseball %>%
   group_by(yearID) %>%
@@ -35,6 +41,136 @@ baseball %>%
   labs(x = "Year", y = "Average Weight (lbs)", title = "Average Weight by Year") +
   theme_bw()
 ```
+
+```{r}
+baseball_lm <- lm(wins ~ avg_weight + avg_height + roster_size + avg_games_played, data = baseball)
+summary(baseball_lm)
+```
+```{r}
+baseball_lm_avg <- lm(running_average_wins ~ avg_weight + avg_height + roster_size + avg_games_played, data = baseball)
+summary(baseball_lm_avg)
+```
+=
+```{r}
+baseball <- baseball %>%
+  group_by(teamID) %>%
+  arrange(yearID) %>%
+  mutate(rolling_avg_wins = rollmean(wins, k = 5, fill = NA, align = "right"))
+
+ggplot(baseball, aes(x = yearID, y = rolling_avg_wins, color = teamID)) +
+  geom_line(alpha = 0.5) +
+  labs(title = "5-Year Rolling Average Wins by Team")
+```
+
+
+
+```{r}
+acf(baseball$wins, main="Autocorrelation of Wins")
+
+```
+
+
+
+
+```{r}
+# Divide teams into above/below median weight
+median_weight <- median(baseball$avg_weight, na.rm=TRUE)
+
+baseball <- baseball %>%
+  mutate(weight_group = ifelse(avg_weight >= median_weight, "Heavy", "Light"))
+
+t.test(wins ~ weight_group, data = baseball)
+```
+
+```{r}
+anova_model <- aov(wins ~ weight_group * roster_size, data = baseball)
+summary(anova_model)
+```
+```{r}
+win_model <- lm(wins ~ avg_weight + avg_height + roster_size + avg_games_played, data = baseball)
+
+```
+
+
+```{r}
+sims <- replicate(10000, {
+  new_team <- data.frame(
+    avg_weight = rnorm(1, mean(baseball$avg_weight), sd(baseball$avg_weight)),
+    avg_height = rnorm(1, mean(baseball$avg_height), sd(baseball$avg_height)),
+    roster_size = rnorm(1, mean(baseball$roster_size), sd(baseball$roster_size)),
+    avg_games_played = rnorm(1, mean(baseball$avg_games_played), sd(baseball$avg_games_played))
+  )
+  predict(win_model, new_team)
+})
+```
+
+```{r}
+sim_mean <- mean(sims)
+sim_ci <- quantile(sims, probs = c(0.025, 0.975))  # 95% CI
+
+sim_mean
+sim_ci
+
+```
+```{r warning = FALSE}
+sims_df <- tibble(wins = sims)
+sims_df %>%
+  ggplot(aes(x = wins)) +
+    geom_histogram(aes(y = ..density..), bins = 40, fill = "skyblue", color = "black", alpha = 0.6) +
+    geom_density(color = "red", size = 1) +
+    geom_vline(xintercept = sim_mean, linetype = "dashed", color = "blue", size = 1) +
+    geom_vline(xintercept = sim_ci, linetype = "dotted", color = "darkgreen", size = 1) +
+    labs(title = "Monte Carlo Simulation of Expected Wins",
+         subtitle = "Dashed = Mean | Dotted = 95% Confidence Interval",
+         x = "Simulated Wins",
+         y = "Density") +
+    theme_bw()
+```
+```{r}
+cluster_data <- baseball %>%
+  group_by(teamID, yearID) %>%
+  summarize(avg_weight = mean(avg_weight, na.rm = TRUE),
+            avg_height = mean(avg_height, na.rm = TRUE),
+            roster_size = mean(roster_size, na.rm = TRUE),
+            avg_games_played = mean(avg_games_played, na.rm = TRUE),
+            wins = mean(wins, na.rm = TRUE),
+            .groups = "drop")
+```
+```{r}
+cluster_features <- cluster_data %>% select(avg_weight, avg_height, roster_size, avg_games_played)
+cluster_scaled <- scale(cluster_features)
+kmeans_result <- kmeans(cluster_scaled, centers = 4, nstart = 25)
+cluster_data$cluster <- kmeans_result$cluster
+```
+```{r}
+autoplot(prcomp(cluster_scaled), data = cluster_data, colour = 'cluster')
+```
+```{r}
+table(cluster_data$cluster, cluster_data$wins > 90)
+
+```
+
+
+```{r}
+tbl <- table(cluster_data$cluster, cluster_data$wins > 90)
+chisq.test(tbl)
+```
+
+
+```{r}
+prop_df <- as.data.frame(tbl) %>%
+  group_by(Var1) %>%
+  mutate(prop = Freq / sum(Freq))
+
+ggplot(prop_df %>% filter(Var2 == TRUE),
+       aes(x = Var1, y = prop, fill = Var1)) +
+  geom_col(show.legend = FALSE) +
+  labs(x = "Cluster", y = "Proportion of 90+ Win Seasons",
+       title = "High-Win Seasons by Cluster") +
+  theme_bw()
+```
+
+
 
 
 
