@@ -83,5 +83,4 @@ FROM Team_Performance t
 JOIN Team_Roster_Stats p
     ON t.yearID = p.yearID
    AND t.teamID = p.teamID
-WHERE t.yearID > 1920
 ORDER BY t.yearID DESC, t.teamID;
