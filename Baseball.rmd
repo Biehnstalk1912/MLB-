@@ -1,9 +1,25 @@
 ---
-title: "Baseball Analysis"
-author: "Your Name"
+title: "Baseball Data Analysis"
+author: "Brady Biehn"
 date: "`r Sys.Date()`"
-output: pdf_document
+output: github_document
 ---
+
 ```{r}
 library(tidyverse)
+library(ggfortify)
+```
+```{r}
+data <- read_csv("Baseball.csv")
+head(data, 10)
+```
+
+```{r}
+data %>%
+    group_by(yearID) %>%
+    summarize(avg_weight = mean(avg_weight, na.rm = TRUE)) %>%
+    ggplot(aes(x = yearID, y = avg_weight)) +
+    geom_point() +
+    geom_line() +
+    labs(x = "Year", y = "Average Weight", title = "Average Player Weight by Year")
 ```
