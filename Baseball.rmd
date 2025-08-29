@@ -1,0 +1,9 @@
+---
+title: "Baseball Analysis"
+author: "Your Name"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+```{r}
+library(tidyverse)
+```
