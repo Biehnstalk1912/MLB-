@@ -1,6 +1,6 @@
 ---
 title: "Baseball"
-author: "Brady Biehn"
+author: ""
 date: "2025-08-29"
 output: pdf_document
 ---
