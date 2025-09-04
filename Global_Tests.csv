@@ -1,0 +1,6 @@
+test,statistic,p_value,df,term,sumsq,meansq,p.value
+t-test (wins ~ weight_group),3.362070828432053,7.880870696512979e-4,2011.6686053901606,NA,NA,NA,NA
+ANOVA (wins ~ weight_group * roster_size),11.974061247530802,NA,1,weight_group,1888.8329848231842,1888.8329848231842,5.506895839396049e-4
+ANOVA (wins ~ weight_group * roster_size),152.28507103740756,NA,1,roster_size,24022.013861914416,24022.013861914416,8.80456675978677e-34
+ANOVA (wins ~ weight_group * roster_size),12.77575659532837,NA,1,weight_group:roster_size,2015.2953926392122,2015.2953926392122,3.593963796939457e-4
+ANOVA (wins ~ weight_group * roster_size),NA,NA,2016,Residuals,318011.34290913807,157.74372168112006,NA
