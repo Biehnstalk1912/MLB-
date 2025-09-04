@@ -1,94 +1,111 @@
 ---
-title: "Baseball"
+title: "Baseball Analysis"
 author: ""
 date: "2025-08-29"
 output: pdf_document
 ---
+
 ```{r include = FALSE}
+# Load libraries
 library(tidyverse)
 library(mosaic)
 library(ggfortify)
 library(zoo)
 library(forecast)
 library(caret)
+library(broom)
+library(purrr)
 ```
-
 ```{r}
-baseball <- read_csv("Baseball.csv")
-baseball <- baseball %>%
+# Load data
+baseball <- read_csv("Baseball.csv") %>%
   mutate(teamID = factor(teamID))
-baseball <- baseball %>%
-              filter(yearID > 1920)
-``` 
-```{r}
-baseball %>%
-  group_by(yearID) %>%
-  summarize(average_height = mean(avg_height)) %>%
-  ggplot(aes(x = yearID, y = average_height)) +
-  geom_point() +
-  geom_line() +
-  labs(x = "Year", y = "Average Height (Inches)", title = "Average Height by Year") +
-  theme_bw()
+
 ```
 
-```{r}
-baseball %>%
-  group_by(yearID) %>%
-  summarize(average_weight = mean(avg_weight)) %>%
-  ggplot(aes(x = yearID, y = average_weight)) +
-  geom_point() +
-  geom_line() +
-  labs(x = "Year", y = "Average Weight (lbs)", title = "Average Weight by Year") +
-  theme_bw()
-```
 
 ```{r}
-baseball_lm <- lm(wins ~ avg_weight + avg_height + roster_size + avg_games_played, data = baseball)
-summary(baseball_lm)
-```
-```{r}
-baseball_lm_avg <- lm(running_average_wins ~ avg_weight + avg_height + roster_size + avg_games_played, data = baseball)
-summary(baseball_lm_avg)
-```
-=
-```{r}
+# 3-year rolling average of wins
 baseball <- baseball %>%
   group_by(teamID) %>%
   arrange(yearID) %>%
-  mutate(rolling_avg_wins = rollmean(wins, k = 5, fill = NA, align = "right"))
+  mutate(rolling_avg_wins = rollmean(wins, k = 3, fill = NA, align = "right")) %>%
+  ungroup()
 
-ggplot(baseball, aes(x = yearID, y = rolling_avg_wins, color = teamID)) +
-  geom_line(alpha = 0.5) +
-  labs(title = "5-Year Rolling Average Wins by Team")
-```
-
-
-
-```{r}
-acf(baseball$wins, main="Autocorrelation of Wins")
-
-```
-
-
-
-
-```{r}
-# Divide teams into above/below median weight
-median_weight <- median(baseball$avg_weight, na.rm=TRUE)
-
+# Median split for weight groups
+median_weight <- median(baseball$avg_weight, na.rm = TRUE)
 baseball <- baseball %>%
   mutate(weight_group = ifelse(avg_weight >= median_weight, "Heavy", "Light"))
 
-t.test(wins ~ weight_group, data = baseball)
 ```
 
+
 ```{r}
-anova_model <- aov(wins ~ weight_group * roster_size, data = baseball)
-summary(anova_model)
+cluster_data <- baseball %>%
+  group_by(teamID, yearID) %>%
+  summarize(avg_weight = mean(avg_weight, na.rm = TRUE),
+            avg_height = mean(avg_height, na.rm = TRUE),
+            roster_size = mean(roster_size, na.rm = TRUE),
+            avg_games_played = mean(avg_games_played, na.rm = TRUE),
+            wins = mean(wins, na.rm = TRUE),
+            .groups = "drop")
+
+cluster_scaled <- scale(cluster_data %>% select(avg_weight, avg_height, roster_size, avg_games_played))
+kmeans_result <- kmeans(cluster_scaled, centers = 4, nstart = 25)
+cluster_data$cluster <- kmeans_result$cluster
+
+baseball <- baseball %>%
+  left_join(cluster_data %>% select(teamID, yearID, cluster),
+            by = c("teamID", "yearID"))
 ```
+
+
 ```{r}
+baseball_lm <- lm(wins ~ avg_weight + avg_height + roster_size, data = baseball)
 win_model <- lm(wins ~ avg_weight + avg_height + roster_size + avg_games_played, data = baseball)
 
+baseball <- baseball %>%
+  mutate(pred_wins_lm = predict(baseball_lm, newdata = baseball),
+         pred_wins_full = predict(win_model, newdata = baseball))
+
+# Fit separate regression per team
+team_models <- baseball %>%
+  group_by(teamID) %>%
+  nest() %>%
+  mutate(
+    model = map(data, ~ lm(wins ~ avg_weight + avg_height + roster_size, data = .x)),
+    preds = map2(model, data, ~ augment(.x, newdata = .y))
+  ) %>%
+  unnest(preds)
+# Add confidence intervals
+regression_results <- bind_rows(
+  tidy(baseball_lm, conf.int = TRUE) %>% mutate(model = "baseball_lm"),
+  tidy(win_model, conf.int = TRUE) %>% mutate(model = "win_model")
+)
+
+# Format very small p-values in scientific notation
+regression_results <- regression_results %>%
+  mutate(
+    p.value = signif(p.value, 6),
+    estimate = signif(estimate, 6),
+    std.error = signif(std.error, 6),
+    conf.low = signif(conf.low, 6),
+    conf.high = signif(conf.high, 6)
+  )
+
+# Regression overview with R^2, adj. R^2, F-stat, p-value
+regression_overview <- bind_rows(
+  glance(baseball_lm) %>% mutate(model = "baseball_lm"),
+  glance(win_model) %>% mutate(model = "win_model")
+) %>%
+  mutate(across(where(is.numeric), ~ signif(.x, 6)))
+
+# Merge per-team predictions back
+baseball <- baseball %>%
+  left_join(
+    team_models %>% select(teamID, yearID, .fitted) %>% rename(pred_wins_team = .fitted),
+    by = c("teamID", "yearID")
+  )
 ```
 
 
@@ -125,54 +142,85 @@ sims_df %>%
          x = "Simulated Wins",
          y = "Density") +
     theme_bw()
+write_csv(sims_df, "Simulation_Wins.csv")
 ```
 ```{r}
-cluster_data <- baseball %>%
-  group_by(teamID, yearID) %>%
-  summarize(avg_weight = mean(avg_weight, na.rm = TRUE),
-            avg_height = mean(avg_height, na.rm = TRUE),
-            roster_size = mean(roster_size, na.rm = TRUE),
-            avg_games_played = mean(avg_games_played, na.rm = TRUE),
-            wins = mean(wins, na.rm = TRUE),
-            .groups = "drop")
-```
-```{r}
-cluster_features <- cluster_data %>% select(avg_weight, avg_height, roster_size, avg_games_played)
-cluster_scaled <- scale(cluster_features)
-kmeans_result <- kmeans(cluster_scaled, centers = 4, nstart = 25)
-cluster_data$cluster <- kmeans_result$cluster
-```
-```{r}
-autoplot(prcomp(cluster_scaled), data = cluster_data, colour = 'cluster')
-```
-```{r}
-table(cluster_data$cluster, cluster_data$wins > 90)
-
+sims_df %>%
+  summarize(
+    mean = mean(wins, na.rm = TRUE), 
+    c1 = quantile(sims_df, 0.025, na.rm = TRUE), 
+    c3 = quantile(sims_df, 0.975, na.rm = TRUE)
+  )
 ```
 
 
 ```{r}
-tbl <- table(cluster_data$cluster, cluster_data$wins > 90)
-chisq.test(tbl)
+ttest_res <- t.test(wins ~ weight_group, data = baseball)
+
+anova_model <- aov(wins ~ weight_group * roster_size, data = baseball)
+anova_res <- broom::tidy(anova_model)
 ```
 
 
 ```{r}
-prop_df <- as.data.frame(tbl) %>%
-  group_by(Var1) %>%
-  mutate(prop = Freq / sum(Freq))
+write_csv(baseball, "Baseball_with_outputs.csv")
+```
 
-ggplot(prop_df %>% filter(Var2 == TRUE),
-       aes(x = Var1, y = prop, fill = Var1)) +
-  geom_col(show.legend = FALSE) +
-  labs(x = "Cluster", y = "Proportion of 90+ Win Seasons",
-       title = "High-Win Seasons by Cluster") +
-  theme_bw()
+
+```{r}
+regression_results <- bind_rows(
+  tidy(baseball_lm) %>% mutate(model = "baseball_lm"),
+  tidy(win_model) %>% mutate(model = "win_model")
+)
+
+regression_overview <- bind_rows(
+  glance(baseball_lm) %>% mutate(model = "baseball_lm"),
+  glance(win_model) %>% mutate(model = "win_model")
+)
+
+write_csv(regression_results, "Regression_Coefficients.csv")
+write_csv(regression_overview, "Regression_Summaries.csv")
+```
+
+
+```{r}
+ttest_table <- tibble(
+  test = "t-test (wins ~ weight_group)",
+  statistic = ttest_res$statistic,
+  p_value = ttest_res$p.value,
+  parameter = ttest_res$parameter
+)
+
+anova_table <- anova_res %>%
+  mutate(test = "ANOVA (wins ~ weight_group * roster_size)")
+
+global_tests <- bind_rows(ttest_table, anova_table)
+
+write_csv(global_tests, "Global_Tests.csv")
+```
+
+
+```{r}
+regression_results <- bind_rows(
+  tidy(baseball_lm) %>% mutate(model = "baseball_lm"),
+  tidy(win_model) %>% mutate(model = "win_model")
+)
+
+regression_overview <- bind_rows(
+  glance(baseball_lm) %>% mutate(model = "baseball_lm"),
+  glance(win_model) %>% mutate(model = "win_model")
+)
+
+write_csv(regression_results, "Regression_Coefficients.csv")
+write_csv(regression_overview, "Regression_Summaries.csv")
+
 ```
 
 
 
+```{r}
 
+```
 
 
 
